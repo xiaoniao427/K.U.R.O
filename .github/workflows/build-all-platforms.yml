@@ -1,0 +1,122 @@
+# .github/workflows/build-all-platforms.yml
+name: Build All Platforms (Godot 4.5 Mono)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  EXPORT_NAME: K.U.R.O   # 仅用于后续步骤，下载链接已硬编码
+
+jobs:
+  export:
+    name: Export for ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            preset: Windows
+            artifact: K.U.R.O-windows.zip
+            export_args: --headless --export-release "Windows" ./build/windows/K.U.R.O.exe
+          - platform: linux
+            preset: Linux
+            artifact: K.U.R.O-linux.zip
+            export_args: --headless --export-release "Linux" ./build/linux/K.U.R.O.x86_64
+          - platform: macos
+            preset: macOS
+            artifact: K.U.R.O-macos.zip
+            export_args: --headless --export-release "macOS" ./build/macos/K.U.R.O.app
+          - platform: web
+            preset: Web
+            artifact: K.U.R.O-web.zip
+            export_args: --headless --export-release "Web" ./build/web/index.html
+          - platform: android
+            preset: Android
+            artifact: K.U.R.O-android.apk
+            export_args: --headless --export-release "Android" ./build/android/K.U.R.O.apk
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: recursive
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore .NET dependencies
+        run: dotnet restore
+
+      # ========== 下载 Godot 编辑器（Mono 版，Linux） - 硬编码 URL ==========
+      - name: Download Godot Editor (Mono)
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.5-stable/Godot_v4.5-stable_linux.x86_64.zip
+          unzip -q Godot_v4.5-stable_linux.x86_64.zip
+          sudo mv Godot_v4.5-stable_linux.x86_64 /usr/local/bin/godot
+          sudo chmod +x /usr/local/bin/godot
+
+      # ========== 下载 Mono 导出模板 - 硬编码 URL ==========
+      - name: Download Mono Export Templates
+        run: |
+          wget -q https://github.com/godotengine/godot/releases/download/4.5-stable/Godot_v4.5-stable_mono_export_templates.tpz
+          mkdir -p ~/.local/share/godot/export_templates/4.5-stable.mono
+          unzip -q Godot_v4.5-stable_mono_export_templates.tpz -d temp_templates
+          cp -r temp_templates/templates/* ~/.local/share/godot/export_templates/4.5-stable.mono/
+          rm -rf temp_templates
+
+      - name: Build C# Solutions
+        run: godot --headless --build-solutions
+
+      # ========== Android 环境 ==========
+      - name: Setup Android SDK
+        if: matrix.platform == 'android'
+        uses: android-actions/setup-android@v3
+
+      - name: Setup JDK 17
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Create Debug Keystore
+        if: matrix.platform == 'android'
+        run: |
+          mkdir -p ~/.local/share/godot/keystore
+          keytool -genkey -v -keystore ~/.local/share/godot/keystore/debug.keystore \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Android Debug, O=Android, C=US"
+
+      # ========== 导出 ==========
+      - name: Export ${{ matrix.platform }}
+        run: |
+          mkdir -p build/${{ matrix.platform }}
+          godot ${{ matrix.export_args }}
+
+      # ========== 打包 ==========
+      - name: Package Artifacts
+        run: |
+          if [ "${{ matrix.platform }}" == "android" ]; then
+            mv build/android/${{ env.EXPORT_NAME }}.apk ${{ matrix.artifact }}
+          else
+            cd build/${{ matrix.platform }}
+            zip -r ../../${{ matrix.artifact }} .
+            cd ../..
+          fi
+
+      # ========== 上传到 Release ==========
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ matrix.artifact }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
