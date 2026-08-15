@@ -72,9 +72,9 @@ jobs:
           cp -r temp_templates/templates/* ~/.local/share/godot/export_templates/4.5-stable.mono/
           rm -rf temp_templates
 
-      # ========== 编译 C# 解决方案（现在 godot 能找到 GodotSharp） ==========
+      # ========== 编译 C# 解决方案（添加 --quit 避免后续崩溃） ==========
       - name: Build C# Solutions
-        run: godot --headless --build-solutions
+        run: godot --headless --build-solutions --quit
 
       # ========== Android 环境 ==========
       - name: Setup Android SDK
